@@ -1,0 +1,824 @@
+# VLESS + SLIPSTREAM: Создание надежного канала для обхода интернет-блокировок
+
+## Введение
+
+В отличие от других решений, эта комбинация использует DNS-трафик как транспортный слой, что позволяет обходить ограничения даже в самых жестких условиях. Мы подробно рассмотрим каждый этап настройки, от подготовки сервера до финальной проверки работоспособности системы.
+
+## 1. Подготовительный этап
+
+### 1.1. Необходимые компоненты
+
+Для успешной реализации проекта вам понадобится:
+
+- **VPS-сервер**: Минимум 1 ядро процессора, 1 ГБ оперативной памяти, операционная система Debian 10 64-bit
+- **Доменное имя**: Любой международный регистратор, главное — не используйте домены в зоне .cn
+- **Клиентское устройство**: Компьютер под управлением Linux (в статье рассматривается Arch Linux)
+
+### 1.2. Настройка домена
+
+1. Выберите надежного международного регистратора доменных имен
+2. В панели управления DNS добавьте A-запись, указывающую на IP-адрес вашего VPS:
+   - Имя: поддомен (например, tunnel)
+   - Значение: IP-адрес вашего VPS
+   - TTL: по умолчанию
+
+## 2. Подключение к серверу и базовые настройки
+
+### 2.1. Установка SSH-клиента и подключение к VPS
+
+Для Windows:
+1. Скачайте и установите PuTTY с официального сайта
+2. Запустите PuTTY и введите IP-адрес и порт вашего VPS
+3. В разделе Connection → SSH → Auth укажите путь к приватному ключу (если используете аутентификацию по ключам)
+4. Сохраните сессию для быстрого подключения в будущем
+5. Нажмите Open и введите имя пользователя и пароль при запросе
+
+Для Linux/macOS:
+```bash
+ssh username@your_server_ip -p port_number
+```
+
+### 2.2. Первичная настройка сервера
+
+После успешного подключения обновите систему:
+```bash
+sudo apt update && sudo apt upgrade -y
+```
+
+Установите необходимые пакеты:
+```bash
+sudo apt install -y curl wget openssl git build-essential net-tools
+```
+
+## 3. Обеспечение безопасности сервера
+
+### 3.1. Изменение порта SSH
+
+Безопасность сервера — критически важный аспект. По умолчанию порт SSH равен 22, что делает его легкой целью для автоматических атак. Измените стандартный порт:
+
+1. Откройте файл конфигурации SSH:
+```bash
+sudo nano /etc/ssh/sshd_config
+```
+
+2. Найдите строку `Port 22` и измените номер порта (рекомендуется использовать число в диапазоне от 1024 до 65535):
+```
+Port 9753
+```
+
+3. Сохраните файл (Ctrl+O, Enter) и выйдите (Ctrl+X)
+
+4. Откройте новый порт в файрволе:
+```bash
+sudo ufw allow 9753/tcp
+```
+
+5. Перезапустите SSH-сервер:
+```bash
+sudo systemctl restart ssh
+```
+
+### 3.2. Создание нового пользователя и запрет подключения под root
+
+1. Создайте нового пользователя:
+```bash
+adduser vpsadmin
+```
+Следуйте инструкциям на экране и установите надежный пароль.
+
+2. Установите sudo для нового пользователя:
+```bash
+apt update && apt install sudo
+usermod -aG sudo vpsadmin
+```
+
+3. Настройте sudo без запроса пароля (для удобства):
+```bash
+sudo visudo
+```
+Добавьте строку в раздел User Privilege Specification:
+```
+vpsadmin ALL=(ALL) NOPASSWD: ALL
+```
+
+4. Запретите удаленное подключение под root:
+```bash
+sudo nano /etc/ssh/sshd_config
+```
+Найдите строку `PermitRootLogin` и измените значение на `no`:
+```
+PermitRootLogin no
+```
+
+5. Перезапустите SSH-сервер:
+```bash
+sudo systemctl restart ssh
+```
+
+### 3.3. Настройка аутентификации по SSH-ключам
+
+1. Сгенерируйте SSH-ключи с помощью PuTTYgen (Windows) или команды `ssh-keygen` (Linux/macOS)
+2. Сохраните публичный ключ в файл `authorized_keys`
+3. Скопируйте файл `authorized_keys` на сервер в директорию `/home/vpsadmin/.ssh/`
+4. Измените права доступа к файлу:
+```bash
+chmod 600 ~/.ssh/authorized_keys
+```
+5. В файле конфигурации SSH отключите аутентификацию по паролю:
+```bash
+sudo nano /etc/ssh/sshd_config
+```
+Измените параметры:
+```
+PasswordAuthentication no
+PubkeyAuthentication yes
+```
+6. Перезапустите SSH:
+```bash
+sudo systemctl restart ssh
+```
+
+## 4. Установка и настройка веб-сервера
+
+### 4.1. Установка Nginx
+
+```bash
+sudo apt update && sudo apt install nginx
+```
+
+### 4.2. Настройка файрвола для Nginx
+
+Проверьте статус файрвола:
+```bash
+sudo ufw status
+```
+
+Если файрвол активен, разрешите трафик для Nginx:
+```bash
+sudo ufw allow 'Nginx Full'
+```
+
+### 4.3. Создание простого веб-сайта-прикрытия
+
+1. Создайте директорию для сайта:
+```bash
+mkdir -p ~/www/webpage/
+```
+
+2. Создайте файл index.html:
+```bash
+nano ~/www/webpage/index.html
+```
+
+3. Вставьте следующий HTML-код:
+```html
+<html lang="">
+<head>
+<title>Веб-сайт</title>
+</head>
+<body>
+<h1>Добро пожаловать на наш сайт</h1>
+<p>Это обычный веб-сайт с полезной информацией.</p>
+</body>
+</html>
+```
+
+4. Дайте права на чтение другим пользователям:
+```bash
+chmod -R a+r ~/www/webpage/
+```
+
+5. Настройте Nginx для обслуживания вашего сайта:
+```bash
+sudo nano /etc/nginx/nginx.conf
+```
+Добавьте внутри блока `http{}` следующую конфигурацию:
+```nginx
+server {
+    listen 80;
+    server_name ваш.поддомен.com;
+    root /home/vpsadmin/www/webpage;
+    index index.html;
+}
+```
+
+6. Перезагрузите Nginx:
+```bash
+sudo systemctl reload nginx
+```
+
+## 5. Получение и установка SSL-сертификатов
+
+### 5.1. Установка acme.sh для управления сертификатами
+
+1. Скачайте и запустите скрипт установки:
+```bash
+wget -O - https://get.acme.sh | sh
+```
+
+2. Обновите переменные окружения:
+```bash
+. .bashrc
+```
+
+3. Включите автоматическое обновление:
+```bash
+acme.sh --upgrade --auto-upgrade
+```
+
+### 5.2. Получение SSL-сертификата
+
+1. Сделайте тестовый запрос (чтобы не превысить лимит Lets Encrypt):
+```bash
+acme.sh --issue --server letsencrypt --test -d ваш.поддомен.com -w /home/vpsadmin/www/webpage --keylength ec-256
+```
+
+2. Если тест успешен, запросите настоящий сертификат:
+```bash
+acme.sh --set-default-ca --server letsencrypt
+acme.sh --issue -d ваш.поддомен.com -w /home/vpsadmin/www/webpage --keylength ec-256 --force
+```
+
+### 5.3. Установка сертификата для Xray
+
+1. Создайте директорию для сертификатов:
+```bash
+mkdir ~/xray_cert
+```
+
+2. Установите сертификат:
+```bash
+acme.sh --install-cert -d ваш.поддомен.com --ecc \
+--fullchain-file ~/xray_cert/xray.crt \
+--key-file ~/xray_cert/xray.key
+```
+
+3. Установите права на чтение для ключа:
+```bash
+chmod +r ~/xray_cert/xray.key
+```
+
+4. Настройте автоматическое обновление сертификата:
+```bash
+nano ~/xray_cert/xray-cert-renew.sh
+```
+Добавьте следующее содержимое:
+```bash
+#!/bin/bash
+/home/vpsadmin/.acme.sh/acme.sh --install-cert -d ваш.поддомен.com --ecc --fullchain-file /home/vpsadmin/xray_cert/xray.crt --key-file /home/vpsadmin/xray_cert/xray.key
+chmod +r /home/vpsadmin/xray_cert/xray.key
+sudo systemctl restart xray
+```
+
+5. Сделайте скрипт исполняемым:
+```bash
+chmod +x ~/xray_cert/xray-cert-renew.sh
+```
+
+6. Добавьте задание в cron:
+```bash
+crontab -e
+```
+Добавьте строку:
+```
+0 1 1 * * bash /home/vpsadmin/xray_cert/xray-cert-renew.sh
+```
+
+## 6. Установка и настройка Xray
+
+### 6.1. Установка Xray
+
+```bash
+sudo bash -c "$(wget https://raw.githubusercontent.com/XTLS/Xray-install/main/install-release.sh -O -)"
+```
+
+### 6.2. Подготовка файлов конфигурации
+
+1. Создайте директорию для логов:
+```bash
+mkdir ~/xray_log
+```
+
+2. Создайте файлы для логов:
+```bash
+touch ~/xray_log/access.log && touch ~/xray_log/error.log
+```
+
+3. Установите права на запись:
+```bash
+chmod a+w ~/xray_log/*.log
+```
+
+### 6.3. Создание конфигурационного файла
+
+```bash
+sudo nano /usr/local/etc/xray/config.json
+```
+
+Вставьте следующую конфигурацию (замените UUID и домен):
+```json
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "/home/vpsadmin/xray_log/access.log",
+    "error": "/home/vpsadmin/xray_log/error.log"
+  },
+  "dns": {
+    "servers": [
+      "https+local://1.1.1.1/dns-query",
+      "localhost"
+    ]
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "ip": ["geoip:private"],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "ip": ["geoip:cn"],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "domain": ["geosite:category-ads-all"],
+        "outboundTag": "block"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "port": 443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "ваш-уникальный-uuid",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "email": "vpsadmin@yourdomain.com"
+          }
+        ],
+        "decryption": "none",
+        "fallbacks": [
+          {
+            "dest": 80
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": "http/1.1",
+          "certificates": [
+            {
+              "certificateFile": "/home/vpsadmin/xray_cert/xray.crt",
+              "keyFile": "/home/vpsadmin/xray_cert/xray.key"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "direct",
+      "protocol": "freedom"
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    }
+  ]
+}
+```
+
+### 6.4. Запуск и проверка Xray
+
+1. Запустите Xray:
+```bash
+sudo systemctl start xray
+```
+
+2. Проверьте статус сервиса:
+```bash
+sudo systemctl status xray
+```
+В выводе должна отображаться строка `active (running)` зеленого цвета.
+
+### 6.5. Оптимизация сервера: включение BBR
+
+1. Добавьте репозиторий backports:
+```bash
+sudo nano /etc/apt/sources.list
+```
+Добавьте строку:
+```
+deb http://archive.debian.org/debian buster-backports main
+```
+
+2. Обновите пакеты и установите последнее ядро:
+```bash
+sudo apt update && sudo apt -t buster-backports install linux-image-amd64
+```
+
+3. Включите BBR:
+```bash
+sudo nano /etc/sysctl.conf
+```
+Добавьте в конец файла:
+```
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+```
+
+4. Перезагрузите сервер:
+```bash
+sudo reboot
+```
+
+5. Проверьте, что BBR включен:
+```bash
+lsmod | grep bbr
+```
+
+### 6.6. Оптимизация: автоматическое перенаправление HTTP на HTTPS
+
+1. Откройте конфигурацию Nginx:
+```bash
+sudo nano /etc/nginx/nginx.conf
+```
+
+2. В сервере на порту 80 добавьте:
+```nginx
+return 301 https://$http_host$request_uri;
+```
+
+3. Добавьте новый сервер для локального порта:
+```nginx
+server {
+  listen 127.0.0.1:8080;
+  root /home/vpsadmin/www/webpage;
+  index index.html;
+  add_header Strict-Transport-Security "max-age=63072000" always;
+}
+```
+
+4. Перезапустите Nginx:
+```bash
+sudo systemctl restart nginx
+```
+
+5. Измените настройки перенаправления в Xray:
+```bash
+sudo nano /usr/local/etc/xray/config.json
+```
+Найдите `"dest": 80` и замените на `"dest": 8080`
+
+6. Перезапустите Xray:
+```bash
+sudo systemctl restart xray
+```
+
+## 7. Установка и настройка Slipstream
+
+### 7.1. Установка Unbound DNS
+
+Unbound DNS необходим для авторитативных ответов по вашему домену. Без него Slipstream не сможет принимать соединения от публичных резолверов.
+
+```bash
+sudo apt install -y unbound
+```
+
+Создайте файл конфигурации:
+```bash
+sudo nano /etc/unbound/unbound.conf.d/slipstream.conf
+```
+
+Добавьте следующие настройки (замените your-domain.xyz на ваш домен):
+```
+server:
+    interface: 0.0.0.0
+    interface: ::0
+    access-control: 0.0.0.0/0 allow
+    access-control: ::0/0 allow
+    
+    # Прямые записи для вашего домена
+    local-zone: "your-domain.xyz." static
+    local- "your-domain.xyz. IN NS ns.your-domain.xyz."
+    local- "ns.your-domain.xyz. IN A YOUR_SERVER_IP"
+    local- "ns.your-domain.xyz. IN AAAA YOUR_SERVER_IPV6"
+```
+
+Остановите конфликтующий DNS-резолвер:
+```bash
+sudo systemctl stop systemd-resolved
+sudo systemctl disable systemd-resolved
+```
+
+Запустите Unbound:
+```bash
+sudo systemctl restart unbound
+sudo systemctl enable unbound
+```
+
+### 7.2. Установка Slipstream-server
+
+1. Скачайте и установите Slipstream-server:
+```bash
+wget https://github.com/EndPositive/slipstream/releases/download/v0.0.1/slipstream-server-v0.0.1-linux-x86_64 -O /tmp/slipstream-server
+sudo mv /tmp/slipstream-server /usr/local/bin/
+sudo chmod +x /usr/local/bin/slipstream-server
+```
+
+2. Создайте сертификаты для Slipstream:
+```bash
+sudo mkdir -p /etc/slipstream/certs
+sudo openssl req -x509 -newkey rsa:2048 \
+  -keyout /etc/slipstream/certs/key.pem \
+  -out /etc/slipstream/certs/cert.pem \
+  -days 365 -nodes \
+  -subj "/CN=your-domain.xyz"
+sudo chown -R nobody:nogroup /etc/slipstream
+sudo chmod 600 /etc/slipstream/certs/*
+```
+
+3. Создайте systemd-сервис:
+```bash
+sudo nano /etc/systemd/system/slipstream-server.service
+```
+
+Содержимое файла:
+```ini
+[Unit]
+Description=Slipstream Server
+After=network.target xray.service unbound.service
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+WorkingDirectory=/etc/slipstream
+ExecStart=/usr/local/bin/slipstream-server \
+  --dns-listen-port=5353 \
+  --target-address=127.0.0.1:1488 \
+  --domain=your-domain.xyz \
+  --cert=/etc/slipstream/certs/cert.pem \
+  --key=/etc/slipstream/certs/key.pem
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=debug
+
+[Install]
+WantedBy=multi-user.target
+```
+
+4. Запустите сервис:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start slipstream-server
+sudo systemctl enable slipstream-server
+```
+
+## 8. Клиентская настройка (Arch Linux)
+
+### 8.1. Установка необходимых пакетов
+
+```bash
+sudo pacman -S --needed base-devel git curl wget openssl xray net-tools
+```
+
+### 8.2. Установка Slipstream-client
+
+```bash
+mkdir -p ~/slipstream
+cd ~/slipstream
+wget https://github.com/EndPositive/slipstream/releases/download/v0.0.1/slipstream-client-v0.0.1-linux-x86_64 -O slipstream-client
+chmod +x slipstream-client
+```
+
+### 8.3. Конфигурация Xray клиента
+
+Создайте файл конфигурации:
+```bash
+mkdir -p ~/.config/xray
+nano ~/.config/xray/config.json
+```
+
+Вставьте следующую конфигурацию (замените UUID и домен):
+```json
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "port": 1080,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true,
+        "packetEncoding": "xudp"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "127.0.0.1",
+            "port": 10808,
+            "users": [
+              {
+                "id": "ваш-uuid",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "www.your-domain.xyz",
+          "alpn": ["http/1.1"],
+          "fingerprint": "chrome"
+        },
+        "sockopt": {
+          "tcpFastOpen": true,
+          "tcpKeepAliveIdle": 300
+        }
+      },
+      "mux": {
+        "enabled": true,
+        "concurrency": 8
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {
+        "response": { "type": "http" }
+      }
+    }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "ip": ["geoip:private"],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": ["geosite:category-ads-all"],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "regexp:^.*\\.ru$",
+          "regexp:^.*\\.by$",
+          "regexp:^.*\\.kz$",
+          "regexp:^.*\\.su$"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "geoip:ru",
+          "geoip:by",
+          "geoip:kz"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "network": "tcp,udp",
+        "outboundTag": "proxy"
+      }
+    ]
+  },
+  "dns": {
+    "servers": [
+      "https://1.1.1.1/dns-query",
+      "https://8.8.8.8/dns-query"
+    ]
+  }
+}
+```
+
+### 8.4. Запуск компонентов
+
+**Терминал 1 (Slipstream туннель):**
+```bash
+cd ~/slipstream
+./slipstream-client \
+  --resolver=77.88.8.8:53 \
+  --domain=your-domain.xyz \
+  --tcp-listen-port=10808
+```
+
+**Терминал 2 (Xray клиент):**
+```bash
+xray run -config ~/.config/xray/config.json
+```
+
+### 8.5. Настройка браузера
+
+1. Откройте настройки браузера
+2. Найдите раздел "Сетевые настройки" или "Прокси"
+3. Установите SOCKS прокси:
+   - Тип: SOCKS v5
+   - Хост: 127.0.0.1
+   - Порт: 1080
+   - Включите опцию "Проксировать DNS через SOCKS5"
+4. Сохраните настройки и перезапустите браузер
+
+## 9. Проверка и оптимизация
+
+### 9.1. Проверка работоспособности
+
+**Проверка IP-адреса:**
+Откройте в браузере https://ip.me. Должен отображаться IP-адрес вашего VPS-сервера.
+
+**Проверка на утечку DNS:**
+Используйте сервис https://dnsleaktest.com для проверки. Все DNS-запросы должны проходить через ваш прокси-сервер.
+
+**Проверка скорости соединения:**
+```bash
+curl -x socks5h://127.0.0.1:1080 -w "Скорость: %{speed_download} байт/сек\nВремя: %{time_total} сек\n" -o /dev/null https://speedtest.tele2.net/100MB.zip
+```
+
+### 9.2. Типичные проблемы и их решение
+
+**Проблема: "bind() failed: Address already in use"**
+- Причина: Порт уже занят другим процессом
+- Решение: Проверьте используемые порты командой `sudo ss -tulpn | grep ':порт'` и остановите конфликтующий процесс
+
+**Проблема: Отсутствие ответа от DNS-сервера**
+- Причина: Unbound не настроен или не работает
+- Решение: Проверьте статус Unbound: `sudo systemctl status unbound`, перезапустите сервис при необходимости
+
+**Проблема: "Connection reset by peer"**
+- Причина: Несовместимость сертификатов или настроек XTLS
+- Решение: Проверьте соответствие имен в сертификатах и конфигурационных файлах, убедитесь в совпадении параметра `flow` на сервере и клиенте
+
+**Проблема: Доступны только локальные сайты**
+- Причина: DNS-запросы не проходят через прокси
+- Решение: Включите опцию "Проксировать DNS через SOCKS5" в браузере, проверьте настройки DNS в операционной системе
+
+### 9.3. Оптимизация производительности
+
+**Мультирезолверная стратегия:**
+Для повышения надежности используйте несколько DNS-резолверов:
+```bash
+./slipstream-client \
+  --resolver=77.88.8.8:53 \
+  --resolver=1.1.1.1:53 \
+  --resolver=8.8.8.8:53 \
+  --domain=your-domain.xyz \
+  --tcp-listen-port=10808 \
+  --congestion-control=bbr
+```
+
+**Оптимизация Xray:**
+Добавьте в конфигурацию Xray клиента следующие параметры:
+```json
+"sockopt": {
+  "tcpFastOpen": true,
+  "tcpKeepAliveIdle": 180,
+  "mark": 255
+},
+"mux": {
+  "enabled": true,
+  "concurrency": 32,
+  "xudpConcurrency": 32
+}
+```
+
+## Заключение
+
+Комбинация VLESS XTLS RPRX Vision и Slipstream представляет собой современное и эффективное решение для обхода интернет-ограничений. Такой подход обеспечивает:
+
+- **Высокую степень анонимности**: трафик выглядит как обычные DNS-запросы
+- **Надежность**: использование нескольких уровней шифрования и резервных соединений
+- **Адаптивность**: возможность выборочной маршрутизации для оптимальной производительности
+- **Совместимость**: работа с любыми приложениями, поддерживающими SOCKS5
