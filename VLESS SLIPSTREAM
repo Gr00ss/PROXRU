@@ -110,6 +110,7 @@ sudo nano /etc/ssh/sshd_config
 PermitRootLogin no
 ```
 
+
 5. Перезапустите SSH-сервер:
 ```bash
 sudo systemctl restart ssh
