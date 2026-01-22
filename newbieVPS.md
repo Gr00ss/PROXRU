@@ -326,6 +326,7 @@ ssh -p 2222 user_name@server_ip
 ssh-keygen -t ed25519 -C "your_email@example.com"
 ```
 
+
 Система спросит:
 
 - Куда сохранить ключи (рекомендуется оставить стандартный путь)
